@@ -11,11 +11,12 @@ import (
 )
 
 type Message struct {
-	Type string `json:"type"`
-	From string `json:"from"`
-	To   string `json:"to"`
-	Text string `json:"text"`
-	Time int64  `json:"time"`
+	Type   string `json:"type"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Text   string `json:"text"`
+	Time   int64  `json:"time"`
+	Status string `json:"status"`
 }
 
 type Login struct {
@@ -53,7 +54,8 @@ func createTable() {
 		from_user TEXT,
 		to_user TEXT,
 		text TEXT,
-		time BIGINT
+		time BIGINT,
+		status TEXT DEFAULT 'sent'
 	)
 	`
 
@@ -67,11 +69,12 @@ func createTable() {
 func saveMessage(msg Message) {
 
 	_, err := db.Exec(
-		"INSERT INTO messages(from_user,to_user,text,time) VALUES($1,$2,$3,$4)",
+		"INSERT INTO messages(from_user,to_user,text,time,status) VALUES($1,$2,$3,$4,$5)",
 		msg.From,
 		msg.To,
 		msg.Text,
 		msg.Time,
+		msg.Status,
 	)
 
 	if err != nil {
@@ -79,13 +82,25 @@ func saveMessage(msg Message) {
 	}
 }
 
-func sendHistory(user string, ws *websocket.Conn) {
+func markDelivered(user string) {
+
+	_, err := db.Exec(
+		"UPDATE messages SET status='delivered' WHERE to_user=$1 AND status='sent'",
+		user,
+	)
+
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func sendOfflineMessages(user string, ws *websocket.Conn) {
 
 	rows, err := db.Query(
-		`SELECT from_user,to_user,text,time
+		`SELECT from_user,to_user,text,time,status
 		 FROM messages
-		 WHERE from_user=$1 OR to_user=$1
-		 ORDER BY id ASC LIMIT 50`,
+		 WHERE to_user=$1 AND status='sent'
+		 ORDER BY id ASC`,
 		user,
 	)
 
@@ -100,7 +115,38 @@ func sendHistory(user string, ws *websocket.Conn) {
 
 		var msg Message
 
-		rows.Scan(&msg.From, &msg.To, &msg.Text, &msg.Time)
+		rows.Scan(&msg.From, &msg.To, &msg.Text, &msg.Time, &msg.Status)
+
+		msg.Type = "message"
+
+		ws.WriteJSON(msg)
+	}
+
+	markDelivered(user)
+}
+
+func sendHistory(user string, ws *websocket.Conn) {
+
+	rows, err := db.Query(
+		`SELECT from_user,to_user,text,time,status
+		 FROM messages
+		 WHERE from_user=$1 OR to_user=$1
+		 ORDER BY id DESC LIMIT 20`,
+		user,
+	)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+
+		var msg Message
+
+		rows.Scan(&msg.From, &msg.To, &msg.Text, &msg.Time, &msg.Status)
 
 		msg.Type = "message"
 
@@ -133,6 +179,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	log.Println("user connected:", user)
 
 	sendHistory(user, ws)
+	sendOfflineMessages(user, ws)
 
 	for {
 
@@ -143,19 +190,25 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			delete(clients, user)
 			ws.Close()
+			log.Println("user disconnected:", user)
 			break
 		}
 
 		msg.Time = time.Now().Unix()
 		msg.Type = "message"
+		msg.Status = "sent"
 
 		saveMessage(msg)
 
 		if receiver, ok := clients[msg.To]; ok {
+
+			msg.Status = "delivered"
+
 			receiver.WriteJSON(msg)
 		}
 
 		if sender, ok := clients[msg.From]; ok {
+
 			sender.WriteJSON(msg)
 		}
 	}
