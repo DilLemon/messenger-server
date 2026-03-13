@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"messenger/database"
-	"messenger/models"
+
+	"messenger/internal/database"
+	"messenger/internal/models"
 )
 
 var clients = map[string]*websocket.Conn{}
@@ -40,13 +41,6 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("connected:", user)
 
-	history, _ := database.LoadHistory(user)
-
-	for i := len(history) - 1; i >= 0; i-- {
-
-		ws.WriteJSON(history[i])
-	}
-
 	for {
 
 		var msg models.Message
@@ -66,7 +60,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		msg.Time = time.Now().Unix()
 		msg.Status = "sent"
 
-		database.SaveMessage(msg)
+		saveMessage(msg)
 
 		if receiver, ok := clients[msg.To]; ok {
 
@@ -79,5 +73,21 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 
 			sender.WriteJSON(msg)
 		}
+	}
+}
+
+func saveMessage(msg models.Message) {
+
+	_, err := database.DB.Exec(
+		"INSERT INTO messages(from_user,to_user,text,time,status) VALUES($1,$2,$3,$4,$5)",
+		msg.From,
+		msg.To,
+		msg.Text,
+		msg.Time,
+		msg.Status,
+	)
+
+	if err != nil {
+		log.Println(err)
 	}
 }
