@@ -85,11 +85,12 @@ func sendHistory(user string, ws *websocket.Conn) {
 		`SELECT from_user,to_user,text,time
 		 FROM messages
 		 WHERE from_user=$1 OR to_user=$1
-		 ORDER BY id DESC LIMIT 20`,
+		 ORDER BY id ASC LIMIT 50`,
 		user,
 	)
 
 	if err != nil {
+		log.Println(err)
 		return
 	}
 
@@ -151,17 +152,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		saveMessage(msg)
 
 		if receiver, ok := clients[msg.To]; ok {
-
 			receiver.WriteJSON(msg)
-
 		}
 
 		if sender, ok := clients[msg.From]; ok {
-
 			sender.WriteJSON(msg)
-
 		}
-
 	}
 }
 
