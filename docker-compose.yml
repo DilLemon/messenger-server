@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: messenger
+      POSTGRES_PASSWORD: messengerpass
+      POSTGRES_DB: messenger
+    volumes:
+      - messenger_db:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  messenger_db:
