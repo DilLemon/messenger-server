@@ -1,6 +1,7 @@
 package models
 
 type Message struct {
+	ID     string `json:"id"`
 	Type   string `json:"type"`
 	From   string `json:"from"`
 	To     string `json:"to"`
@@ -12,4 +13,10 @@ type Message struct {
 type Login struct {
 	Type string `json:"type"`
 	User string `json:"user"`
+}
+
+type Receipt struct {
+	Type      string `json:"type"`
+	MessageID string `json:"messageId"`
+	User      string `json:"user"`
 }
