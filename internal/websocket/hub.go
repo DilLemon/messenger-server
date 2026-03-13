@@ -17,6 +17,11 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+const (
+	pongWait   = 60 * time.Second
+	pingPeriod = 30 * time.Second
+)
+
 func Handle(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := upgrader.Upgrade(w, r, nil)
@@ -25,6 +30,15 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+
+	// heartbeat setup
+	ws.SetReadDeadline(time.Now().Add(pongWait))
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	go pingLoop(ws)
 
 	var login models.Login
 
@@ -36,7 +50,6 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := login.User
-
 	clients[user] = ws
 
 	log.Println("connected:", user)
@@ -65,13 +78,30 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		if receiver, ok := clients[msg.To]; ok {
 
 			msg.Status = "delivered"
-
 			receiver.WriteJSON(msg)
 		}
 
 		if sender, ok := clients[msg.From]; ok {
 
 			sender.WriteJSON(msg)
+		}
+	}
+}
+
+func pingLoop(ws *websocket.Conn) {
+
+	ticker := time.NewTicker(pingPeriod)
+
+	for {
+
+		<-ticker.C
+
+		err := ws.WriteMessage(websocket.PingMessage, nil)
+
+		if err != nil {
+
+			ws.Close()
+			return
 		}
 	}
 }
