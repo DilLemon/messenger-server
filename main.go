@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -12,21 +11,25 @@ import (
 )
 
 type Message struct {
-	User string `json:"user"`
+	Type string `json:"type"`
+	From string `json:"from"`
+	To   string `json:"to"`
 	Text string `json:"text"`
 	Time int64  `json:"time"`
+}
+
+type Login struct {
+	Type string `json:"type"`
+	User string `json:"user"`
 }
 
 var db *sql.DB
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-var clients = make(map[*websocket.Conn]bool)
-var broadcast = make(chan Message)
+var clients = map[string]*websocket.Conn{}
 
 func connectDB() {
 
@@ -47,7 +50,8 @@ func createTable() {
 	query := `
 	CREATE TABLE IF NOT EXISTS messages (
 		id SERIAL PRIMARY KEY,
-		user_name TEXT,
+		from_user TEXT,
+		to_user TEXT,
 		text TEXT,
 		time BIGINT
 	)
@@ -63,8 +67,9 @@ func createTable() {
 func saveMessage(msg Message) {
 
 	_, err := db.Exec(
-		"INSERT INTO messages(user_name,text,time) VALUES($1,$2,$3)",
-		msg.User,
+		"INSERT INTO messages(from_user,to_user,text,time) VALUES($1,$2,$3,$4)",
+		msg.From,
+		msg.To,
 		msg.Text,
 		msg.Time,
 	)
@@ -74,10 +79,14 @@ func saveMessage(msg Message) {
 	}
 }
 
-func sendHistory(ws *websocket.Conn) {
+func sendHistory(user string, ws *websocket.Conn) {
 
 	rows, err := db.Query(
-		"SELECT user_name,text,time FROM messages ORDER BY id DESC LIMIT 20",
+		`SELECT from_user,to_user,text,time
+		 FROM messages
+		 WHERE from_user=$1 OR to_user=$1
+		 ORDER BY id DESC LIMIT 20`,
+		user,
 	)
 
 	if err != nil {
@@ -86,21 +95,15 @@ func sendHistory(ws *websocket.Conn) {
 
 	defer rows.Close()
 
-	var history []Message
-
 	for rows.Next() {
 
-		var m Message
+		var msg Message
 
-		rows.Scan(&m.User, &m.Text, &m.Time)
+		rows.Scan(&msg.From, &msg.To, &msg.Text, &msg.Time)
 
-		history = append(history, m)
-	}
+		msg.Type = "message"
 
-	for i := len(history) - 1; i >= 0; i-- {
-
-		data, _ := json.Marshal(history[i])
-		ws.WriteMessage(websocket.TextMessage, data)
+		ws.WriteJSON(msg)
 	}
 }
 
@@ -113,9 +116,22 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clients[ws] = true
+	var login Login
 
-	sendHistory(ws)
+	err = ws.ReadJSON(&login)
+
+	if err != nil || login.Type != "login" {
+		ws.Close()
+		return
+	}
+
+	user := login.User
+
+	clients[user] = ws
+
+	log.Println("user connected:", user)
+
+	sendHistory(user, ws)
 
 	for {
 
@@ -124,38 +140,28 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		err := ws.ReadJSON(&msg)
 
 		if err != nil {
-			delete(clients, ws)
+			delete(clients, user)
 			ws.Close()
 			break
 		}
 
-		if msg.Time == 0 {
-			msg.Time = time.Now().Unix()
-		}
+		msg.Time = time.Now().Unix()
+		msg.Type = "message"
 
 		saveMessage(msg)
 
-		broadcast <- msg
-	}
-}
+		if receiver, ok := clients[msg.To]; ok {
 
-func handleMessages() {
+			receiver.WriteJSON(msg)
 
-	for {
-
-		msg := <-broadcast
-
-		for client := range clients {
-
-			err := client.WriteJSON(msg)
-
-			if err != nil {
-
-				client.Close()
-				delete(clients, client)
-
-			}
 		}
+
+		if sender, ok := clients[msg.From]; ok {
+
+			sender.WriteJSON(msg)
+
+		}
+
 	}
 }
 
@@ -164,8 +170,6 @@ func main() {
 	connectDB()
 
 	http.HandleFunc("/ws", handleConnections)
-
-	go handleMessages()
 
 	log.Println("server started on :8080")
 
