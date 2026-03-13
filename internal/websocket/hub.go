@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"messenger/internal/database"
@@ -31,8 +32,8 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// heartbeat setup
 	ws.SetReadDeadline(time.Now().Add(pongWait))
+
 	ws.SetPongHandler(func(string) error {
 		ws.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
@@ -70,6 +71,22 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
+		// обработка read receipt
+		if msg.Type == "read" {
+
+			_, err := database.DB.Exec(
+				"UPDATE messages SET status='read' WHERE message_id=$1",
+				msg.ID,
+			)
+
+			if err != nil {
+				log.Println(err)
+			}
+
+			continue
+		}
+
+		msg.ID = uuid.New().String()
 		msg.Time = time.Now().Unix()
 		msg.Status = "sent"
 
@@ -78,6 +95,7 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		if receiver, ok := clients[msg.To]; ok {
 
 			msg.Status = "delivered"
+
 			receiver.WriteJSON(msg)
 		}
 
@@ -109,7 +127,9 @@ func pingLoop(ws *websocket.Conn) {
 func saveMessage(msg models.Message) {
 
 	_, err := database.DB.Exec(
-		"INSERT INTO messages(from_user,to_user,text,time,status) VALUES($1,$2,$3,$4,$5)",
+		`INSERT INTO messages(message_id,from_user,to_user,text,time,status)
+		 VALUES($1,$2,$3,$4,$5,$6)`,
+		msg.ID,
 		msg.From,
 		msg.To,
 		msg.Text,
