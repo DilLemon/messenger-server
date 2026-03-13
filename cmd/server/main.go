@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"messenger/database"
-	"messenger/websocket"
+	"messenger/internal/database"
+	"messenger/internal/websocket"
 )
 
 func main() {
