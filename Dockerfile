@@ -4,10 +4,8 @@ WORKDIR /app
 
 COPY . .
 
-RUN go mod init messenger
-RUN go get github.com/gorilla/websocket
-RUN go get github.com/lib/pq
+RUN go mod tidy
 
 EXPOSE 8080
 
-CMD ["go","run","main.go"]
+CMD ["go","run","cmd/server/main.go"]
